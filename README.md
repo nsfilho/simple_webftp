@@ -19,7 +19,7 @@ cargo build --release
 ## Install
 
 ```sh
-cargo install --url https://github.com/nsfilho/simple_webftp.git
+cargo install --git https://github.com/nsfilho/simple_webftp.git
 ```
 
 
