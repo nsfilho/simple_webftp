@@ -1,110 +1,45 @@
 #[macro_use]
 extern crate rocket;
 
-use helpers::rocket::{ApiError, ApiVersion, RequestSocketAddr};
-use rocket::response::content::{RawJavaScript, RawCss, RawHtml};
-use rocket::{form::Form, fs::TempFile, serde::json::Json, serde::Serialize};
-use rocket::Config;
-use tracing::{info, Level};
+use std::path::PathBuf;
+
+use clap::Parser;
+use rocket::{fs::FileServer, Config};
+use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
+pub mod assets;
+pub mod echo;
+pub mod files;
 pub mod helpers;
 
-const INDEX_HTML : &str = include_str!("../pages/dist/index.html");
-const MAIN_JS : &str = include_str!("../pages/dist/assets/main.js");
-const MAIN_CSS : &str = include_str!("../pages/dist/assets/main.css");
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+#[command(
+    help_template = "{about-section}Authors: {author-with-newline}Version: {version}\n\n{usage-heading} {usage}\n\n{all-args} {tab}"
+)]
+pub struct Args {
+    #[clap(short, long, default_value = "0.0.0.0", help = "Address to listen on")]
+    pub address: String,
 
-#[get("/")]
-pub fn index() -> RawHtml<&'static str> {
-    RawHtml(INDEX_HTML)
-}
+    #[clap(short, long, default_value = "8000", help = "Port to listen on")]
+    pub port: u16,
 
-#[get("/assets/main.js")]
-pub fn main_js() -> RawJavaScript<&'static str> {
-    RawJavaScript(MAIN_JS)
-}
+    #[clap(
+        short,
+        long,
+        default_value = "1024000000",
+        help = "Max file size in bytes, default: 1G"
+    )]
+    pub max_file_size: u64,
 
-#[get("/assets/main.css")]
-pub fn main_css() -> RawCss<&'static str> {
-    RawCss(MAIN_CSS)
-}
-
-#[get("/echo")]
-pub fn echo(socket_addr: RequestSocketAddr) -> Json<ApiVersion> {
-    let version = env!("CARGO_PKG_VERSION");
-    let app_name = env!("CARGO_PKG_NAME");
-    let current_time = chrono::Local::now().to_string();
-    let current_host =
-        hostname::get().map_or("unknown".to_string(), |h| h.to_string_lossy().to_string());
-    let client_ip = socket_addr.socket_addr.to_string();
-    Json(ApiVersion {
-        version: version.to_string(),
-        app_name: app_name.to_string(),
-        current_time: current_time.to_string(),
-        current_host,
-        client_ip: client_ip.to_string(),
-    })
-}
-
-#[derive(FromForm)]
-struct Upload<'f> {
-    pub file: TempFile<'f>,
-}
-
-#[derive(Serialize, Debug)]
-struct FileUploadedSucessfully {
-    pub file_name: String,
-}
-
-/** Route to upload files */
-#[post("/upload", format = "multipart/form-data", data = "<form>")]
-async fn upload_file(
-    mut form: Form<Upload<'_>>,
-) -> Result<Json<FileUploadedSucessfully>, ApiError> {
-    let file_name = format!("uploads/{}", form.file.name().unwrap());
-    info!(
-        "Uploading: destination = {}, len: {}",
-        file_name,
-        form.file.len()
-    );
-    let result = form.file.persist_to(file_name.clone()).await;
-    match result {
-        Ok(_) => Ok(Json(FileUploadedSucessfully {
-            file_name: file_name.to_string(),
-        })),
-        Err(e) => {
-            return Err(ApiError {
-                message: "Error uploading file".to_string(),
-                error: e.to_string(),
-            });
-        }
-    }
-}
-
-/** Route to return a list of files */
-#[get("/list")]
-async fn list_files() -> Result<Json<Vec<String>>, ApiError> {
-    let files = rocket::tokio::fs::read_dir("uploads").await;
-    match files {
-        Ok(mut files) => {
-            let mut result: Vec<String> = vec![];
-            while let Ok(file) = files.next_entry().await {
-                match file {
-                    None => break,
-                    Some(file) => {
-                        result.push(file.file_name().to_string_lossy().to_string());
-                    }
-                }
-            }
-            Ok(Json(result))
-        }
-        Err(e) => {
-            return Err(ApiError {
-                message: "Error listing files".to_string(),
-                error: e.to_string(),
-            });
-        }
-    }
+    #[clap(
+        short,
+        long,
+        default_value = "uploads",
+        help = "Folder to store uploaded files"
+    )]
+    pub folder: PathBuf,
 }
 
 #[rocket::main]
@@ -117,19 +52,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    // grants uploads directory exists
-    let _ = rocket::tokio::fs::create_dir_all("uploads").await;
-
     // starting application
+    let _definitions = Args::parse();
+    let upload_folder = _definitions.folder.clone();
+    let _ = rocket::tokio::fs::create_dir_all(upload_folder.clone()).await;
     let _config = Config::figment()
-        .merge(("limits.file", 1 * 1024 * 1024 * 1024))
-        .merge(("address", "0.0.0.0"));
+        .merge(("limits.file", _definitions.max_file_size))
+        .merge(("address", _definitions.address.clone()))
+        .merge(("port", _definitions.port));
     let _rocket = rocket::build()
         .configure(_config)
+        .manage(_definitions)
         .attach(helpers::rocket::CORS)
-        .mount("/v1", routes![echo])
-        .mount("/files", routes![upload_file, list_files])
-        .mount("/", routes![index, main_js, main_css])
+        .mount("/v1", routes![echo::echo])
+        .mount("/files", routes![files::file_upload, files::file_list])
+        .mount("/files/download", FileServer::from(upload_folder))
+        .mount(
+            "/",
+            routes![assets::index, assets::main_js, assets::main_css],
+        )
         .launch()
         .await?;
     Ok(())

@@ -1,5 +1,7 @@
 [package]
 name = "simple_webftp"
+authors = ["Nelio Santos <nsfilho@icloud.com>"]
+description = "A simple webftp server"
 version = "0.1.0"
 edition = "2021"
 
@@ -16,3 +18,4 @@ dotenv = "0.15.0"
 tracing-subscriber = "0.3.17"
 tracing = "0.1.37"
 anyhow = "1.0.75"
+clap = { version = "4.4.6", features = ["derive"] }

@@ -11,5 +11,5 @@ export default defineConfig({
                 assetFileNames: 'assets/main.css',
             }
         }
-    }
+    },
 })
