@@ -58,6 +58,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = rocket::tokio::fs::create_dir_all(upload_folder.clone()).await;
     let _config = Config::figment()
         .merge(("limits.file", _definitions.max_file_size))
+        .merge(("limits.data-form", _definitions.max_file_size))
+        .merge(("limits.form", _definitions.max_file_size))
         .merge(("address", _definitions.address.clone()))
         .merge(("port", _definitions.port));
     let _rocket = rocket::build()
